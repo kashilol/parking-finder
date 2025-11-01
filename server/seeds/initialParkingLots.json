@@ -1,0 +1,328 @@
+[
+    {
+      "street_name": "White City Parking Lot",
+      "address": "Hatavor 2, Tel Aviv",
+      "latitude": 32.0725,
+      "longitude": 34.7800,
+      "operating_hours": "24/7",
+      "total_capacity": 50,
+      "ownership_type": "Public",
+      "free_minutes": 0,
+      "pricing_rules": [
+        {
+          "type": "standard",
+          "first_block_duration": 60,
+          "first_block_price": 37.00,
+          "additional_block_duration": 15,
+          "additional_block_price": 9.00,
+          "max_daily_price": 135.00,
+          "app_first_block_price": 27.00,
+          "app_additional_block_price": 7.00,
+          "app_max_daily_price": 50.00
+        },
+        {
+          "type": "day",
+          "day": "friday",
+          "price": 37.00,
+          "night_start": "20:00",
+          "night_end": "08:00",
+          "night_price": 9.00,
+          "app_price": 27.00,
+          "app_night_price": 7.00
+        },
+        {
+          "type": "day",
+          "day": "saturday",
+          "price": 37.00,
+          "night_start": "20:00",
+          "night_end": "08:00",
+          "night_price": 9.00,
+          "app_price": 19.00,
+          "app_night_price": 4.00
+        },
+        {
+          "type": "special",
+          "app_discount": 0.30
+        }
+      ],
+      "notes": "Pricing depends on payment method (app/booth). City discounts may apply.",
+      "last_modified": "2025-07-26T15:00:00Z",
+      "last_modified_by": "admin"
+    },
+    {
+      "street_name": "Yarkon 78 Parking Lot",
+      "address": "Yarkon 78, Tel Aviv",
+      "latitude": 32.0850,
+      "longitude": 34.7750,
+      "operating_hours": "24/7",
+      "total_capacity": 30,
+      "ownership_type": "Private",
+      "free_minutes": 0,
+      "pricing_rules": [
+        {
+          "type": "standard",
+          "first_block_duration": 60,
+          "first_block_price": 18.00,
+          "additional_block_duration": 60,
+          "additional_block_price": 10.00,
+          "max_daily_price": 100.00
+        },
+        {
+          "type": "day",
+          "day": "sunday",
+          "price": 18.00,
+          "additional_block_price": 10.00
+        },
+        {
+          "type": "day",
+          "day": "monday",
+          "price": 18.00,
+          "additional_block_price": 10.00
+        },
+        {
+          "type": "day",
+          "day": "tuesday",
+          "price": 18.00,
+          "additional_block_price": 10.00
+        },
+        {
+          "type": "day",
+          "day": "wednesday",
+          "price": 18.00,
+          "additional_block_price": 10.00
+        },
+        {
+          "type": "day",
+          "day": "thursday",
+          "price": 18.00,
+          "additional_block_price": 10.00
+        },
+        {
+          "type": "day",
+          "day": "friday",
+          "price": 35.00,
+          "additional_block_price": 25.00
+        },
+        {
+          "type": "day",
+          "day": "saturday",
+          "price": 35.00,
+          "additional_block_price": 25.00
+        }
+      ],
+      "notes": "Special app rates may be available.",
+      "last_modified": "2025-07-26T15:00:00Z",
+      "last_modified_by": "admin"
+    },
+    {
+      "street_name": "Even Ziv Parking Lot",
+      "address": "Se'adya Gaon 22, Tel Aviv",
+      "latitude": 32.0700,
+      "longitude": 34.7700,
+      "operating_hours": "24/7",
+      "total_capacity": 20,
+      "ownership_type": "Public",
+      "free_minutes": 0,
+      "pricing_rules": [
+        {
+          "type": "standard",
+          "first_block_duration": 60,
+          "first_block_price": 10.00
+        }
+      ],
+      "notes": "Limited rate structure detailed; may need onsite check for full menu.",
+      "last_modified": "2025-07-26T15:00:00Z",
+      "last_modified_by": "admin"
+    },
+    {
+      "street_name": "Maze 3 (Rova Parking Lot)",
+      "address": "Maze 3, Tel Aviv",
+      "latitude": 32.0800,
+      "longitude": 34.7850,
+      "operating_hours": "24/7",
+      "total_capacity": 40,
+      "ownership_type": "Private",
+      "free_minutes": 0,
+      "pricing_rules": [
+        {
+          "type": "standard",
+          "first_block_duration": 1440,
+          "first_block_price": 80.00,
+          "app_first_block_price": 69.00
+        }
+      ],
+      "notes": "Overnight and part-day options.",
+      "last_modified": "2025-07-26T15:00:00Z",
+      "last_modified_by": "admin"
+    },
+    {
+      "street_name": "Tel Aviv Beach Parking Lot",
+      "address": "Herbert Samuel Esplanade, Tel Aviv",
+      "latitude": 32.0830,
+      "longitude": 34.7670,
+      "operating_hours": "24/7",
+      "total_capacity": 100,
+      "ownership_type": "Public",
+      "free_minutes": 0,
+      "pricing_rules": [
+        {
+          "type": "standard",
+          "first_block_duration": 1440,
+          "first_block_price": 24.00
+        }
+      ],
+      "notes": "May vary during holidays or high season.",
+      "last_modified": "2025-07-26T15:00:00Z",
+      "last_modified_by": "admin"
+    },
+    {
+      "street_name": "Municipal Curb Parking (Blue and White)",
+      "address": "Various, Tel Aviv",
+      "latitude": 32.0750,
+      "longitude": 34.7800,
+      "operating_hours": "7am-7pm",
+      "total_capacity": 0,
+      "ownership_type": "Public",
+      "free_minutes": 0,
+      "pricing_rules": [
+        {
+          "type": "standard",
+          "first_block_duration": 60,
+          "first_block_price": 6.30,
+          "additional_block_duration": 60,
+          "additional_block_price": 6.30
+        },
+        {
+          "type": "day",
+          "day": "sunday",
+          "price": 6.30
+        },
+        {
+          "type": "day",
+          "day": "monday",
+          "price": 6.30
+        },
+        {
+          "type": "day",
+          "day": "tuesday",
+          "price": 6.30
+        },
+        {
+          "type": "day",
+          "day": "wednesday",
+          "price": 6.30
+        },
+        {
+          "type": "day",
+          "day": "thursday",
+          "price": 6.30
+        },
+        {
+          "type": "day",
+          "day": "friday",
+          "price": 6.30
+        },
+        {
+          "type": "day",
+          "day": "saturday",
+          "price": 0.00
+        },
+        {
+          "type": "special",
+          "resident_discount": 0.75
+        }
+      ],
+      "notes": "Add fields for area/zone, discount eligibility, and signage info.",
+      "last_modified": "2025-07-26T15:00:00Z",
+      "last_modified_by": "admin"
+    },
+    {
+      "street_name": "$Test Lot",
+      "address": "Test Address, Tel Aviv",
+      "latitude": 32.0850,
+      "longitude": 34.7818,
+      "operating_hours": "24/7",
+      "total_capacity": 25,
+      "ownership_type": "Public",
+      "free_minutes": 0,
+      "pricing_rules": [
+        {
+          "type": "standard",
+          "first_block_duration": 60,
+          "first_block_price": 15.00,
+          "additional_block_duration": 30,
+          "additional_block_price": 5.00
+        }
+      ],
+      "notes": "Test parking lot pricing.",
+      "last_modified": "2025-07-26T15:00:00Z",
+      "last_modified_by": "admin"
+    },
+    {
+      "street_name": "$Ibn Gabirol St",
+      "address": "Ibn Gabirol St, Tel Aviv",
+      "latitude": 32.0780,
+      "longitude": 34.7820,
+      "operating_hours": "24/7",
+      "total_capacity": 30,
+      "ownership_type": "Public",
+      "free_minutes": 0,
+      "pricing_rules": [
+        {
+          "type": "standard",
+          "first_block_duration": 60,
+          "first_block_price": 12.00,
+          "additional_block_duration": 60,
+          "additional_block_price": 8.00
+        }
+      ],
+      "notes": "Street parking pricing.",
+      "last_modified": "2025-07-26T15:00:00Z",
+      "last_modified_by": "admin"
+    },
+    {
+      "street_name": "$Sarona Market",
+      "address": "Sarona Market, Tel Aviv",
+      "latitude": 32.0750,
+      "longitude": 34.7790,
+      "operating_hours": "24/7",
+      "total_capacity": 40,
+      "ownership_type": "Private",
+      "free_minutes": 0,
+      "pricing_rules": [
+        {
+          "type": "standard",
+          "first_block_duration": 60,
+          "first_block_price": 20.00,
+          "additional_block_duration": 30,
+          "additional_block_price": 10.00,
+          "max_daily_price": 80.00
+        }
+      ],
+      "notes": "Market area parking.",
+      "last_modified": "2025-07-26T15:00:00Z",
+      "last_modified_by": "admin"
+    },
+    {
+      "street_name": "$New Place",
+      "address": "New Place, Tel Aviv",
+      "latitude": 32.0800,
+      "longitude": 34.7750,
+      "operating_hours": "24/7",
+      "total_capacity": 35,
+      "ownership_type": "Private",
+      "free_minutes": 0,
+      "pricing_rules": [
+        {
+          "type": "standard",
+          "first_block_duration": 60,
+          "first_block_price": 18.00,
+          "additional_block_duration": 60,
+          "additional_block_price": 12.00
+        }
+      ],
+      "notes": "Newly added parking area.",
+      "last_modified": "2025-07-26T15:00:00Z",
+      "last_modified_by": "admin"
+    }
+  ]

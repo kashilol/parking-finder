@@ -1,0 +1,12 @@
+@tailwind base;
+   @tailwind components;
+   @tailwind utilities;
+
+   /* Fallback styles to confirm CSS loading */
+   body {
+     background-color: red !important;
+   }
+   .debug-container {
+     border: 4px solid blue !important;
+     background-color: #e0f7ff !important;
+   }
