@@ -2,10 +2,8 @@ FROM node:18-alpine
 
 WORKDIR /app
 
-# Copy package files
-COPY package*.json ./
-COPY server/package*.json ./server/
-COPY client/package*.json ./client/
+# Copy all source code FIRST
+COPY . .
 
 # Install root dependencies
 RUN npm install
@@ -19,9 +17,8 @@ WORKDIR /app/client
 RUN npm install
 RUN npm run build
 
-# Copy all source code
+# Back to root
 WORKDIR /app
-COPY . .
 
 # Expose ports
 EXPOSE 3000
