@@ -98,14 +98,23 @@ const App = () => {
       setShowSuggestions(false);
       return;
     }
-
+  
     try {
       const isHebrew = /[\u0590-\u05FF]/.test(trimmedQuery);
       const lang = normalizeLanguage(isHebrew ? 'he' : i18next.language);
-      const url = `https://api.geoapify.com/v1/geocode/autocomplete?text=${encodeURIComponent(trimmedQuery)}&limit=6&lang=${lang}&apiKey=${GEOAPIFY_API_KEY}&bias=proximity:32.0853,34.7818`;
-      const response = await fetch(url, { headers: { 'Accept': 'application/json' } });
+      
+      const response = await fetch(`${API_BASE_URL}/geocode/autocomplete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          text: trimmedQuery, 
+          limit: 6, 
+          lang: lang 
+        })
+      });
+      
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-
+  
       const data = await response.json();
       const filteredSuggestions = data.features.map(item => ({
         name: item.properties.formatted,
@@ -119,7 +128,7 @@ const App = () => {
       setSuggestions([]);
       setShowSuggestions(false);
     }
-  };
+  };  
 
   const geocodeDestination = async (address) => {
     try {
@@ -127,10 +136,16 @@ const App = () => {
       if (!trimmedAddress) throw new Error('Address is empty');
       const isHebrew = /[\u0590-\u05FF]/.test(trimmedAddress);
       const lang = normalizeLanguage(isHebrew ? 'he' : i18next.language);
-      const response = await fetch(
-        `https://api.geoapify.com/v1/geocode/search?text=${encodeURIComponent(trimmedAddress)}&limit=1&lang=${lang}&apiKey=${GEOAPIFY_API_KEY}`,
-        { headers: { 'Accept': 'application/json' } }
-      );
+      
+      const response = await fetch(`${API_BASE_URL}/geocode/search`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          text: trimmedAddress, 
+          lang: lang 
+        })
+      });
+      
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
       const data = await response.json();
       if (data.features.length > 0) {
@@ -144,6 +159,7 @@ const App = () => {
       return null;
     }
   };
+  
 
     // Pricing strategy functions
   const pricingStrategies = {
