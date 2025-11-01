@@ -1,307 +1,333 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const helmet = require('helmet');
-const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 
-const ParkingLot = require('./models/ParkingLot');
-const { verifyAdmin, loginAdmin } = require('./middleware/auth');
 
 const app = express();
 
-// Security middleware
-app.use(helmet());
 
-// CORS configuration
+// CORS Configuration
 const allowedOrigins = process.env.ALLOWED_ORIGINS 
-  ? process.env.ALLOWED_ORIGINS.split(',') 
-  : ['http://localhost:5173', 'http://127.0.0.1:5173'];
+  ? process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim())
+  : ['http://localhost:8080', 'http://localhost:5173', 'https://parking-finder-five.vercel.app'];
+
 
 app.use(cors({
-  origin: function(origin, callback) {
-    // Allow requests with no origin (mobile apps, Postman, etc.)
-    if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
+  origin: allowedOrigins,
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'x-admin-password'],
   credentials: true
 }));
 
-// Rate limiting - prevent abuse
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
-  message: 'Too many requests from this IP, please try again later.'
+
+app.use(express.json());
+
+
+// MongoDB Connection
+mongoose.connect(process.env.MONGODB_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+})
+  .then(() => console.log('✓ Connected to MongoDB Atlas'))
+  .catch((err) => console.error('✗ MongoDB connection error:', err.message));
+
+
+// Parking Lot Schema
+const parkingLotSchema = new mongoose.Schema({
+  street_name: { type: String, required: true },
+  address: { type: String, required: true },
+  location: {
+    type: {
+      type: String,
+      enum: ['Point'],
+      default: 'Point'
+    },
+    coordinates: {
+      type: [Number], // [longitude, latitude]
+      required: true
+    }
+  },
+  latitude: Number,
+  longitude: Number,
+  operating_hours: { type: String, default: '24/7' },
+  total_spots: { type: Number, default: 0 },
+  ownership_type: {
+    type: String,
+    enum: ['Public', 'Private'],
+    default: 'Public'
+  },
+  pricing_strategy: { type: String, default: 'hourly_blocks' },
+  pricing_rules: [
+    {
+      type: { type: String },
+      first_block_duration: Number,
+      first_block_price: Number,
+      app_first_block_price: Number,
+      additional_block_duration: Number,
+      additional_block_price: Number,
+      max_daily_price: Number,
+      single_entrance_price: Number,
+      resident_discount: Number,
+      disabled_discount: Number
+    }
+  ],
+  notes: String,
+  last_modified: { type: Date, default: Date.now },
+  last_modified_by: String,
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now }
 });
-app.use('/api/', limiter);
 
-// Stricter rate limit for authentication
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 5,
-  message: 'Too many login attempts, please try again later.'
-});
 
-// Body parser middleware
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+// Create geospatial index for location-based queries
+parkingLotSchema.index({ 'location.coordinates': '2dsphere' });
 
-// Connect to MongoDB
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => {
-    console.log('✓ Connected to MongoDB Atlas');
-  })
-  .catch(err => {
-    console.error('✗ MongoDB connection error:', err.message);
-    process.exit(1);
-  });
 
-// Handle MongoDB connection events
-mongoose.connection.on('error', err => {
-  console.error('MongoDB error:', err);
-});
+const ParkingLot = mongoose.model('ParkingLot', parkingLotSchema);
 
-mongoose.connection.on('disconnected', () => {
-  console.warn('MongoDB disconnected');
-});
 
-// ==================== ROUTES ====================
+// Routes
 
-// Health check
-app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'OK', 
-    mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
-    timestamp: new Date().toISOString()
-  });
-});
 
-// Admin login (public route)
-app.post('/api/admin/login', authLimiter, loginAdmin);
-
-// Get all parking lots (public)
+// Get all parking lots
 app.get('/api/parking-lots', async (req, res) => {
   try {
-    const { lat, lng, radius } = req.query;
-    
-    let query = {};
-    
-    // If location params provided, use geospatial query
-    if (lat && lng && radius) {
-      const latitude = parseFloat(lat);
-      const longitude = parseFloat(lng);
-      const radiusMeters = parseInt(radius);
-      
-      if (isNaN(latitude) || isNaN(longitude) || isNaN(radiusMeters)) {
-        return res.status(400).json({ error: 'Invalid location parameters' });
-      }
-      
-      query = {
-        location: {
-          $near: {
-            $geometry: {
-              type: 'Point',
-              coordinates: [longitude, latitude] // [lng, lat] order
-            },
-            $maxDistance: radiusMeters
-          }
+    const lots = await ParkingLot.find();
+    console.log('Fetched parking lots:', lots.length);
+    res.json(lots);
+  } catch (err) {
+    console.error('Error fetching parking lots:', err.message);
+    res.status(500).json({ error: 'Database error: ' + err.message });
+  }
+});
+
+
+// Search parking lots by location
+app.post('/api/parking-lots/search', async (req, res) => {
+  try {
+    const { lat, lon, radius = 5000 } = req.body;
+
+
+    if (!lat || !lon) {
+      return res.status(400).json({ error: 'Latitude and longitude required' });
+    }
+
+
+    const lots = await ParkingLot.find({
+      'location.coordinates': {
+        $near: {
+          $geometry: {
+            type: 'Point',
+            coordinates: [lon, lat]
+          },
+          $maxDistance: radius
         }
+      }
+    });
+
+
+    res.json(lots);
+  } catch (err) {
+    console.error('Error searching parking lots:', err.message);
+    res.status(500).json({ error: 'Search error: ' + err.message });
+  }
+});
+
+
+// Admin Login
+app.post('/api/admin/login', async (req, res) => {
+  try {
+    const { password } = req.body;
+    const adminPasswordHash = process.env.ADMIN_PASSWORD_HASH;
+
+
+    if (!password || password !== adminPasswordHash) {
+      return res.status(401).json({ error: 'Invalid password' });
+    }
+
+
+    res.json({ success: true, token: 'admin-token' });
+  } catch (err) {
+    console.error('Login error:', err.message);
+    res.status(500).json({ error: 'Login error: ' + err.message });
+  }
+});
+
+
+// Add parking lot (Admin only)
+app.post('/api/parking-lots', async (req, res) => {
+  try {
+    const adminPassword = req.headers['x-admin-password'];
+    
+    if (adminPassword !== process.env.ADMIN_PASSWORD_HASH) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+
+    const {
+      street_name, address, latitude, longitude, operating_hours = '24/7',
+      total_spots = 0, ownership_type, pricing_strategy, pricing_rules, notes
+    } = req.body;
+
+
+    if (!street_name || !address || latitude == null || longitude == null) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+
+    const newLot = new ParkingLot({
+      street_name,
+      address,
+      location: {
+        type: 'Point',
+        coordinates: [longitude, latitude]
+      },
+      latitude,
+      longitude,
+      operating_hours,
+      total_spots,
+      ownership_type: ownership_type || 'Public',
+      pricing_strategy: pricing_strategy || 'hourly_blocks',
+      pricing_rules: pricing_rules || [],
+      notes,
+      last_modified_by: 'admin'
+    });
+
+
+    await newLot.save();
+    console.log(`Parking lot added with ID: ${newLot._id}`);
+    res.json({ id: newLot._id });
+  } catch (err) {
+    console.error('Error adding parking lot:', err.message);
+    res.status(500).json({ error: 'Database error: ' + err.message });
+  }
+});
+
+
+// Update parking lot (Admin only)
+app.put('/api/parking-lots/:id', async (req, res) => {
+  try {
+    const adminPassword = req.headers['x-admin-password'];
+    
+    if (adminPassword !== process.env.ADMIN_PASSWORD_HASH) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+
+    const { id } = req.params;
+    const updates = req.body;
+    updates.last_modified = new Date();
+    updates.last_modified_by = 'admin';
+
+
+    // Handle location coordinates
+    if (updates.latitude && updates.longitude) {
+      updates.location = {
+        type: 'Point',
+        coordinates: [updates.longitude, updates.latitude]
       };
     }
-    
-    const lots = await ParkingLot.find(query)
-      .select('-__v') // Exclude version key
-      .lean(); // Return plain JavaScript objects for better performance
-    
-    console.log(`Fetched ${lots.length} parking lots`);
-    res.json(lots);
-  } catch (error) {
-    console.error('Error fetching parking lots:', error);
-    res.status(500).json({ error: 'Failed to fetch parking lots: ' + error.message });
-  }
-});
 
-// Get single parking lot by ID (public)
-app.get('/api/parking-lots/:id', async (req, res) => {
-  try {
-    const lot = await ParkingLot.findById(req.params.id).select('-__v');
-    
-    if (!lot) {
-      return res.status(404).json({ error: 'Parking lot not found' });
-    }
-    
-    res.json(lot);
-  } catch (error) {
-    console.error('Error fetching parking lot:', error);
-    res.status(500).json({ error: 'Failed to fetch parking lot: ' + error.message });
-  }
-});
 
-// Create new parking lot (protected)
-app.post('/api/parking-lots', verifyAdmin, async (req, res) => {
-  try {
-    const { latitude, longitude, ...data } = req.body;
-    
-    // Validate required fields
-    if (!data.street_name || !data.address || !latitude || !longitude) {
-      return res.status(400).json({ 
-        error: 'Missing required fields: street_name, address, latitude, longitude' 
-      });
-    }
-    
-    // Create parking lot with location
-    const parkingLot = new ParkingLot({
-      ...data,
-      location: {
-        type: 'Point',
-        coordinates: [parseFloat(longitude), parseFloat(latitude)]
-      },
-      last_modified_by: req.admin.role
-    });
-    
-    await parkingLot.save();
-    
-    console.log(`Created parking lot: ${parkingLot.street_name} (ID: ${parkingLot._id})`);
-    res.status(201).json({ 
-      id: parkingLot._id,
-      message: 'Parking lot created successfully',
-      data: parkingLot
-    });
-  } catch (error) {
-    console.error('Error creating parking lot:', error);
-    
-    if (error.name === 'ValidationError') {
-      return res.status(400).json({ 
-        error: 'Validation error: ' + Object.values(error.errors).map(e => e.message).join(', ')
-      });
-    }
-    
-    res.status(500).json({ error: 'Failed to create parking lot: ' + error.message });
-  }
-});
+    const updatedLot = await ParkingLot.findByIdAndUpdate(id, updates, { new: true });
 
-// Update parking lot (protected)
-app.put('/api/parking-lots/:id', verifyAdmin, async (req, res) => {
-  try {
-    const { latitude, longitude, ...data } = req.body;
-    
-    // Validate required fields
-    if (!data.street_name || !data.address || !latitude || !longitude) {
-      return res.status(400).json({ 
-        error: 'Missing required fields: street_name, address, latitude, longitude' 
-      });
-    }
-    
-    // Update data
-    const updateData = {
-      ...data,
-      location: {
-        type: 'Point',
-        coordinates: [parseFloat(longitude), parseFloat(latitude)]
-      },
-      last_modified_by: req.admin.role
-    };
-    
-    const updatedLot = await ParkingLot.findByIdAndUpdate(
-      req.params.id,
-      updateData,
-      { 
-        new: true, // Return updated document
-        runValidators: true // Run schema validators
-      }
-    );
-    
+
     if (!updatedLot) {
       return res.status(404).json({ error: 'Parking lot not found' });
     }
-    
-    console.log(`Updated parking lot: ${updatedLot.street_name} (ID: ${updatedLot._id})`);
-    res.json({ 
-      id: updatedLot._id,
-      message: 'Parking lot updated successfully',
-      data: updatedLot
-    });
-  } catch (error) {
-    console.error('Error updating parking lot:', error);
-    
-    if (error.name === 'ValidationError') {
-      return res.status(400).json({ 
-        error: 'Validation error: ' + Object.values(error.errors).map(e => e.message).join(', ')
-      });
-    }
-    
-    if (error.name === 'CastError') {
-      return res.status(400).json({ error: 'Invalid parking lot ID' });
-    }
-    
-    res.status(500).json({ error: 'Failed to update parking lot: ' + error.message });
+
+
+    console.log(`Parking lot updated with ID: ${id}`);
+    res.json(updatedLot);
+  } catch (err) {
+    console.error('Error updating parking lot:', err.message);
+    res.status(500).json({ error: 'Database error: ' + err.message });
   }
 });
 
-// Delete parking lot (protected)
-app.delete('/api/parking-lots/:id', verifyAdmin, async (req, res) => {
+
+// Delete parking lot (Admin only)
+app.delete('/api/parking-lots/:id', async (req, res) => {
   try {
-    const deletedLot = await ParkingLot.findByIdAndDelete(req.params.id);
+    const adminPassword = req.headers['x-admin-password'];
     
+    if (adminPassword !== process.env.ADMIN_PASSWORD_HASH) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+
+    const { id } = req.params;
+    const deletedLot = await ParkingLot.findByIdAndDelete(id);
+
+
     if (!deletedLot) {
       return res.status(404).json({ error: 'Parking lot not found' });
     }
-    
-    console.log(`Deleted parking lot: ${deletedLot.street_name} (ID: ${deletedLot._id})`);
-    res.json({ 
-      id: deletedLot._id,
-      message: 'Parking lot deleted successfully'
-    });
-  } catch (error) {
-    console.error('Error deleting parking lot:', error);
-    
-    if (error.name === 'CastError') {
-      return res.status(400).json({ error: 'Invalid parking lot ID' });
-    }
-    
-    res.status(500).json({ error: 'Failed to delete parking lot: ' + error.message });
+
+
+    console.log(`Parking lot deleted with ID: ${id}`);
+    res.json({ id });
+  } catch (err) {
+    console.error('Error deleting parking lot:', err.message);
+    res.status(500).json({ error: 'Database error: ' + err.message });
   }
 });
 
-// 404 handler
-app.use((req, res) => {
-  res.status(404).json({ error: 'Route not found' });
+
+// Proxy Geoapify autocomplete requests
+app.post('/api/geocode/autocomplete', async (req, res) => {
+  try {
+    const { text, limit = 6, lang = 'en' } = req.body;
+    const lat = 32.0853;
+    const lon = 34.7818;
+
+    const url = `https://api.geoapify.com/v1/geocode/autocomplete?text=${encodeURIComponent(text)}&limit=${limit}&lang=${lang}&apiKey=${process.env.GEOAPIFY_API_KEY}&bias=proximity:${lon},${lat}`;
+
+    const response = await fetch(url);
+    const data = await response.json();
+    res.json(data);
+  } catch (err) {
+    console.error('Geoapify autocomplete error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// Global error handler
-app.use((err, req, res, next) => {
-  console.error('Global error:', err);
-  res.status(500).json({ 
-    error: process.env.NODE_ENV === 'development' 
-      ? err.message 
-      : 'Internal server error' 
-  });
+
+// Proxy Geoapify search requests
+app.post('/api/geocode/search', async (req, res) => {
+  try {
+    const { text, lang = 'en' } = req.body;
+
+    const url = `https://api.geoapify.com/v1/geocode/search?text=${encodeURIComponent(text)}&limit=1&lang=${lang}&apiKey=${process.env.GEOAPIFY_API_KEY}`;
+
+    const response = await fetch(url);
+    const data = await response.json();
+    res.json(data);
+  } catch (err) {
+    console.error('Geoapify search error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// Start server
+
+// Health check
+app.get('/health', (req, res) => {
+  res.json({ status: 'OK', message: 'Server is running' });
+});
+
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`✓ Server running on port ${PORT}`);
   console.log(`✓ Environment: ${process.env.NODE_ENV || 'development'}`);
 });
 
-// Graceful shutdown
-process.on('SIGINT', async () => {
-  console.log('\nShutting down gracefully...');
-  await mongoose.connection.close();
-  console.log('MongoDB connection closed');
-  process.exit(0);
-});
 
-process.on('SIGTERM', async () => {
-  console.log('\nSIGTERM received, shutting down...');
-  await mongoose.connection.close();
-  process.exit(0);
+process.on('SIGINT', () => {
+  console.log('Closing database connection');
+  mongoose.connection.close(() => {
+    console.log('Database connection closed');
+    process.exit(0);
+  });
 });
