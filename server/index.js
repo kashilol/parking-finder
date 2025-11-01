@@ -1,269 +1,261 @@
 const express = require('express');
-const sqlite3 = require('sqlite3').verbose();
+const mongoose = require('mongoose');
 const cors = require('cors');
+require('dotenv').config();
 
 const app = express();
 
+// CORS Configuration
+const allowedOrigins = process.env.ALLOWED_ORIGINS 
+  ? process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim())
+  : ['http://localhost:8080', 'http://localhost:5173', 'https://parking-finder-five.vercel.app'];
+
 app.use(cors({
-  origin: ['http://localhost:8080', 'http://127.0.0.1:8080'],
+  origin: allowedOrigins,
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'x-admin-password']
+  allowedHeaders: ['Content-Type', 'x-admin-password'],
+  credentials: true
 }));
+
 app.use(express.json());
 
-const db = new sqlite3.Database('../Task-Manager/parking.db', sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE, (err) => {
-  if (err) {
-    console.error('Error opening SQLite database:', err.message);
-    return;
-  }
-  console.log('Connected to SQLite database.');
-  
-  // Create parking_lots table with new schema
-  db.run(`CREATE TABLE IF NOT EXISTS parking_lots (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    street_name TEXT NOT NULL,
-    address TEXT NOT NULL,
-    latitude REAL NOT NULL,
-    longitude REAL NOT NULL,
-    operating_hours TEXT DEFAULT '24/7',
-    total_spots INTEGER DEFAULT 0,
-    ownership_type TEXT CHECK(ownership_type IN ('Private', 'Public')),
-    pricing_rules TEXT, -- Store as JSON
-    notes TEXT,
-    last_modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    last_modified_by TEXT
-  )`, (err) => {
-    if (err) {
-      console.error('Error creating parking_lots table:', err.message);
-    } else {
-      console.log('parking_lots table created or already exists.');
-    }
-  });
+// MongoDB Connection
+mongoose.connect(process.env.MONGODB_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+})
+  .then(() => console.log('✓ Connected to MongoDB Atlas'))
+  .catch((err) => console.error('✗ MongoDB connection error:', err.message));
 
-  // Check if migration is needed (i.e., if pricing_rules column doesn't exist)
-  db.all("PRAGMA table_info(parking_lots)", [], (err, columns) => {
-    if (err) {
-      console.error('Error checking table schema:', err.message);
-      return;
+// Parking Lot Schema
+const parkingLotSchema = new mongoose.Schema({
+  street_name: { type: String, required: true },
+  address: { type: String, required: true },
+  location: {
+    type: {
+      type: String,
+      enum: ['Point'],
+      default: 'Point'
+    },
+    coordinates: {
+      type: [Number], // [longitude, latitude]
+      required: true
     }
-    const columnNames = columns.map(col => col.name);
-    if (!columnNames.includes('pricing_rules')) {
-      console.log('Adding pricing_rules column and migrating data...');
-      db.serialize(() => {
-        // Add pricing_rules column
-        db.run('ALTER TABLE parking_lots ADD COLUMN pricing_rules TEXT', err => {
-          if (err) console.error('Error adding pricing_rules column:', err.message);
-        });
-
-        // Migrate existing data
-        db.all('SELECT * FROM parking_lots', [], (err, rows) => {
-          if (err) {
-            console.error('Error fetching rows for migration:', err.message);
-            return;
-          }
-          rows.forEach(row => {
-            const pricing_rules = [
-              {
-                type: 'standard',
-                free_minutes: row.free_minutes || 0,
-                first_block_duration: 60,
-                first_block_price: row.price_first_hour || 0,
-                additional_block_duration: 60,
-                additional_block_price: row.price_additional_hour || 0,
-                max_daily_price: row.max_daily_price || null,
-                single_entrance_price: null,
-                app_first_block_price: row.price_first_hour || 0,
-                app_additional_block_price: row.price_additional_hour || 0,
-                app_max_daily_price: row.max_daily_price || null,
-              },
-              ...['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'].map(day => ({
-                type: 'day',
-                day,
-                price: 0,
-                night_start: row.night_parking_start || '20:00',
-                night_end: row.night_parking_end || '08:00',
-                night_price: 0,
-                day_price: 0,
-                app_price: 0,
-                app_night_price: 0,
-                app_day_price: 0,
-              })),
-              {
-                type: 'free_windows',
-                free_intervals: row.free_parking_days ? row.free_parking_days.split(',') : [],
-              },
-              {
-                type: 'special',
-                resident_discount: row.tel_aviv_resident_price ? 1 - (row.tel_aviv_resident_price / row.price_first_hour) : 0,
-                disabled_discount: row.disabled_price ? 1 - (row.disabled_price / row.price_first_hour) : 0,
-                app_discount: 0,
-                custom_tags: row.tags ? row.tags.split(',').map(tag => ({ tag: tag.trim(), discount: 0 })) : [],
-              },
-            ];
-            db.run(
-              `UPDATE parking_lots SET pricing_rules = ?, notes = ?, last_modified = ?, last_modified_by = ? WHERE id = ?`,
-              [JSON.stringify(pricing_rules), row.notes || '', row.last_updated || new Date().toISOString(), 'migration', row.id],
-              err => {
-                if (err) console.error('Error updating row during migration:', err.message);
-              }
-            );
-          });
-        });
-      });
-    } else {
-      console.log('No migration needed: pricing_rules column exists.');
+  },
+  latitude: Number,
+  longitude: Number,
+  operating_hours: { type: String, default: '24/7' },
+  total_spots: { type: Number, default: 0 },
+  ownership_type: {
+    type: String,
+    enum: ['Public', 'Private'],
+    default: 'Public'
+  },
+  pricing_strategy: { type: String, default: 'hourly_blocks' },
+  pricing_rules: [
+    {
+      type: { type: String },
+      first_block_duration: Number,
+      first_block_price: Number,
+      app_first_block_price: Number,
+      additional_block_duration: Number,
+      additional_block_price: Number,
+      max_daily_price: Number,
+      single_entrance_price: Number,
+      resident_discount: Number,
+      disabled_discount: Number
     }
-  });
+  ],
+  notes: String,
+  last_modified: { type: Date, default: Date.now },
+  last_modified_by: String,
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now }
 });
 
-app.get('/parking-lots', (req, res) => {
-  db.all('SELECT * FROM parking_lots', [], (err, rows) => {
-    if (err) {
-      console.error('Error fetching parking lots:', err.message);
-      res.status(500).json({ error: 'Database error: ' + err.message });
-      return;
-    }
-    const parsedRows = rows.map(row => ({
-      ...row,
-      pricing_rules: row.pricing_rules ? JSON.parse(row.pricing_rules) : null,
-    }));
-    console.log('Fetched parking lots:', parsedRows);
-    res.json(parsedRows);
-  });
+// Create geospatial index for location-based queries
+parkingLotSchema.index({ 'location.coordinates': '2dsphere' });
+
+const ParkingLot = mongoose.model('ParkingLot', parkingLotSchema);
+
+// Routes
+
+// Get all parking lots
+app.get('/api/parking-lots', async (req, res) => {
+  try {
+    const lots = await ParkingLot.find();
+    console.log('Fetched parking lots:', lots.length);
+    res.json(lots);
+  } catch (err) {
+    console.error('Error fetching parking lots:', err.message);
+    res.status(500).json({ error: 'Database error: ' + err.message });
+  }
 });
 
-app.post('/parking-lots', (req, res) => {
-  const adminPassword = req.headers['x-admin-password'];
-  if (adminPassword !== 'admin123') {
-    console.error('Unauthorized attempt to add parking lot');
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
+// Search parking lots by location
+app.post('/api/parking-lots/search', async (req, res) => {
+  try {
+    const { lat, lon, radius = 5000 } = req.body;
 
-  const {
-    street_name, address, latitude, longitude, operating_hours = '24/7',
-    total_spots = 0, ownership_type, pricing_rules, notes, last_modified, last_modified_by
-  } = req.body;
-
-  if (!street_name || !address || latitude == null || longitude == null) {
-    console.error('Missing required fields:', { street_name, address, latitude, longitude });
-    return res.status(400).json({ error: 'Missing required fields' });
-  }
-
-  const normalizedOwnershipType = ownership_type ?
-    ownership_type.charAt(0).toUpperCase() + ownership_type.slice(1).toLowerCase() : null;
-  if (normalizedOwnershipType && !['Private', 'Public'].includes(normalizedOwnershipType)) {
-    console.error('Invalid ownership_type:', ownership_type);
-    return res.status(400).json({ error: 'Invalid ownership_type: must be Private or Public' });
-  }
-
-  const sql = `INSERT INTO parking_lots (
-    street_name, address, latitude, longitude, operating_hours,
-    total_spots, ownership_type, pricing_rules, notes, last_modified, last_modified_by
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-
-  const params = [
-    street_name, address, latitude, longitude, operating_hours,
-    total_spots, normalizedOwnershipType, pricing_rules ? JSON.stringify(pricing_rules) : null,
-    notes, last_modified || new Date().toISOString(), last_modified_by || 'admin'
-  ];
-
-  db.run(sql, params, function (err) {
-    if (err) {
-      console.error('Error inserting parking lot:', err.message, 'Params:', params);
-      res.status(500).json({ error: 'Database error: ' + err.message });
-      return;
+    if (!lat || !lon) {
+      return res.status(400).json({ error: 'Latitude and longitude required' });
     }
-    console.log(`Parking lot added with ID: ${this.lastID}`);
-    res.json({ id: this.lastID });
-  });
+
+    const lots = await ParkingLot.find({
+      'location.coordinates': {
+        $near: {
+          $geometry: {
+            type: 'Point',
+            coordinates: [lon, lat]
+          },
+          $maxDistance: radius
+        }
+      }
+    });
+
+    res.json(lots);
+  } catch (err) {
+    console.error('Error searching parking lots:', err.message);
+    res.status(500).json({ error: 'Search error: ' + err.message });
+  }
 });
 
-app.put('/parking-lots/:id', (req, res) => {
-  const adminPassword = req.headers['x-admin-password'];
-  if (adminPassword !== 'admin123') {
-    console.error('Unauthorized attempt to edit parking lot');
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
+// Admin Login
+app.post('/api/admin/login', async (req, res) => {
+  try {
+    const { password } = req.body;
+    const adminPasswordHash = process.env.ADMIN_PASSWORD_HASH;
 
-  const { id } = req.params;
-  const {
-    street_name, address, latitude, longitude, operating_hours = '24/7',
-    total_spots = 0, ownership_type, pricing_rules, notes, last_modified, last_modified_by
-  } = req.body;
-
-  if (!street_name || !address || latitude == null || longitude == null) {
-    console.error('Missing required fields for update:', { street_name, address, latitude, longitude });
-    return res.status(400).json({ error: 'Missing required fields' });
-  }
-
-  const normalizedOwnershipType = ownership_type ?
-    ownership_type.charAt(0).toUpperCase() + ownership_type.slice(1).toLowerCase() : null;
-  if (normalizedOwnershipType && !['Private', 'Public'].includes(normalizedOwnershipType)) {
-    console.error('Invalid ownership_type:', ownership_type);
-    return res.status(400).json({ error: 'Invalid ownership_type: must be Private or Public' });
-  }
-
-  const sql = `UPDATE parking_lots SET
-    street_name = ?, address = ?, latitude = ?, longitude = ?, operating_hours = ?,
-    total_spots = ?, ownership_type = ?, pricing_rules = ?, notes = ?,
-    last_modified = ?, last_modified_by = ?
-    WHERE id = ?`;
-
-  const params = [
-    street_name, address, latitude, longitude, operating_hours,
-    total_spots, normalizedOwnershipType, pricing_rules ? JSON.stringify(pricing_rules) : null,
-    notes, last_modified || new Date().toISOString(), last_modified_by || 'admin', id
-  ];
-
-  db.run(sql, params, function (err) {
-    if (err) {
-      console.error('Error updating parking lot:', err.message, 'Params:', params);
-      res.status(500).json({ error: 'Database error: ' + err.message });
-      return;
+    if (!password || password !== adminPasswordHash) {
+      return res.status(401).json({ error: 'Invalid password' });
     }
-    if (this.changes === 0) {
-      console.error('No parking lot found with ID:', id);
-      res.status(404).json({ error: 'Parking lot not found' });
-      return;
+
+    res.json({ success: true, token: 'admin-token' });
+  } catch (err) {
+    console.error('Login error:', err.message);
+    res.status(500).json({ error: 'Login error: ' + err.message });
+  }
+});
+
+// Add parking lot (Admin only)
+app.post('/api/parking-lots', async (req, res) => {
+  try {
+    const adminPassword = req.headers['x-admin-password'];
+    
+    if (adminPassword !== process.env.ADMIN_PASSWORD_HASH) {
+      return res.status(401).json({ error: 'Unauthorized' });
     }
+
+    const {
+      street_name, address, latitude, longitude, operating_hours = '24/7',
+      total_spots = 0, ownership_type, pricing_strategy, pricing_rules, notes
+    } = req.body;
+
+    if (!street_name || !address || latitude == null || longitude == null) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    const newLot = new ParkingLot({
+      street_name,
+      address,
+      location: {
+        type: 'Point',
+        coordinates: [longitude, latitude]
+      },
+      latitude,
+      longitude,
+      operating_hours,
+      total_spots,
+      ownership_type: ownership_type || 'Public',
+      pricing_strategy: pricing_strategy || 'hourly_blocks',
+      pricing_rules: pricing_rules || [],
+      notes,
+      last_modified_by: 'admin'
+    });
+
+    await newLot.save();
+    console.log(`Parking lot added with ID: ${newLot._id}`);
+    res.json({ id: newLot._id });
+  } catch (err) {
+    console.error('Error adding parking lot:', err.message);
+    res.status(500).json({ error: 'Database error: ' + err.message });
+  }
+});
+
+// Update parking lot (Admin only)
+app.put('/api/parking-lots/:id', async (req, res) => {
+  try {
+    const adminPassword = req.headers['x-admin-password'];
+    
+    if (adminPassword !== process.env.ADMIN_PASSWORD_HASH) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const { id } = req.params;
+    const updates = req.body;
+    updates.last_modified = new Date();
+    updates.last_modified_by = 'admin';
+
+    // Handle location coordinates
+    if (updates.latitude && updates.longitude) {
+      updates.location = {
+        type: 'Point',
+        coordinates: [updates.longitude, updates.latitude]
+      };
+    }
+
+    const updatedLot = await ParkingLot.findByIdAndUpdate(id, updates, { new: true });
+
+    if (!updatedLot) {
+      return res.status(404).json({ error: 'Parking lot not found' });
+    }
+
     console.log(`Parking lot updated with ID: ${id}`);
-    res.json({ id });
-  });
+    res.json(updatedLot);
+  } catch (err) {
+    console.error('Error updating parking lot:', err.message);
+    res.status(500).json({ error: 'Database error: ' + err.message });
+  }
 });
 
-app.delete('/parking-lots/:id', (req, res) => {
-  const adminPassword = req.headers['x-admin-password'];
-  if (adminPassword !== 'admin123') {
-    console.error('Unauthorized attempt to delete parking lot');
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
+// Delete parking lot (Admin only)
+app.delete('/api/parking-lots/:id', async (req, res) => {
+  try {
+    const adminPassword = req.headers['x-admin-password'];
+    
+    if (adminPassword !== process.env.ADMIN_PASSWORD_HASH) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
 
-  const { id } = req.params;
-  db.run('DELETE FROM parking_lots WHERE id = ?', [id], function (err) {
-    if (err) {
-      console.error('Error deleting parking lot:', err.message);
-      res.status(500).json({ error: 'Database error: ' + err.message });
-      return;
+    const { id } = req.params;
+    const deletedLot = await ParkingLot.findByIdAndDelete(id);
+
+    if (!deletedLot) {
+      return res.status(404).json({ error: 'Parking lot not found' });
     }
-    if (this.changes === 0) {
-      console.error('No parking lot found with ID:', id);
-      res.status(404).json({ error: 'Parking lot not found' });
-      return;
-    }
+
     console.log(`Parking lot deleted with ID: ${id}`);
     res.json({ id });
-  });
+  } catch (err) {
+    console.error('Error deleting parking lot:', err.message);
+    res.status(500).json({ error: 'Database error: ' + err.message });
+  }
 });
 
-const PORT = 3000;
+// Health check
+app.get('/health', (req, res) => {
+  res.json({ status: 'OK', message: 'Server is running' });
+});
+
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Server running at http://localhost:${PORT}`);
+  console.log(`✓ Server running on port ${PORT}`);
+  console.log(`✓ Environment: ${process.env.NODE_ENV || 'development'}`);
 });
 
 process.on('SIGINT', () => {
   console.log('Closing database connection');
-  db.close((err) => {
-    if (err) console.error('Error closing database:', err.message);
+  mongoose.connection.close(() => {
     console.log('Database connection closed');
     process.exit(0);
   });
