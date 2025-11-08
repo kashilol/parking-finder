@@ -281,17 +281,51 @@ app.post('/api/geocode/autocomplete', async (req, res) => {
     const { text, limit = 6, lang = 'en' } = req.body;
     const lat = 32.0853;
     const lon = 34.7818;
-
-    const url = `https://api.geoapify.com/v1/geocode/autocomplete?text=${encodeURIComponent(text)}&limit=${limit}&lang=${lang}&apiKey=${process.env.GEOAPIFY_API_KEY}&bias=proximity:${lon},${lat}`;
+    
+    // Filter to Tel Aviv - Israel only
+    const url = `https://api.geoapify.com/v1/geocode/autocomplete?text=${encodeURIComponent(text)}&limit=${limit}&lang=${lang}&apiKey=${process.env.GEOAPIFY_API_KEY}&filter=rect:34.7413,32.0404,34.8516,32.1502&bias=proximity:${lon},${lat}`;
 
     const response = await fetch(url);
     const data = await response.json();
-    res.json(data);
+    
+    // Format the results to be cleaner
+    const formattedData = {
+      ...data,
+      features: data.features.map(feature => {
+        const props = feature.properties;
+        
+        // Build a clean name
+        let name = props.street || props.name || props.address_line1 || '';
+        let subtext = 'Tel Aviv, Israel';
+        
+        // Add house number if available
+        if (props.housenumber) {
+          name = `${name} ${props.housenumber}`;
+        }
+        
+        // Add district/neighborhood if available
+        if (props.district || props.suburb) {
+          subtext = `${props.district || props.suburb}, Tel Aviv`;
+        }
+        
+        return {
+          ...feature,
+          properties: {
+            ...props,
+            formatted: name,
+            subtext: subtext
+          }
+        };
+      })
+    };
+    
+    res.json(formattedData);
   } catch (err) {
     console.error('Geoapify autocomplete error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
+
 
 
 // Proxy Geoapify search requests

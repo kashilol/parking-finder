@@ -1,15 +1,18 @@
 import React, { useState, useEffect, useRef } from 'react';
 import i18next from './i18n';
+import TimePicker from './components/TimePicker';
+import VehicleSelector from './components/VehicleSelector';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000/api';
 const GEOAPIFY_API_KEY = import.meta.env.VITE_GEOAPIFY_API_KEY;
 
 const App = () => {
   const [destination, setDestination] = useState('');
-  const [radius, setRadius] = useState('500');
+  const [radius, setRadius] = useState('2000');
   const [hours, setHours] = useState(1);
   const [minutes, setMinutes] = useState(0);
-  const [vehicleType, setVehicleType] = useState('standard');
+  const [selectedVehicle, setSelectedVehicle] = useState(null);
+  const vehicleType = selectedVehicle?.type || 'standard';
   const [parkingLots, setParkingLots] = useState([]);
   const [center, setCenter] = useState({ lat: 32.0853, lng: 34.7818 });
   const [error, setError] = useState('');
@@ -24,9 +27,13 @@ const App = () => {
   const [suggestions, setSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [showSidebar, setShowSidebar] = useState(false);
+  const [showVehiclesPanel, setShowVehiclesPanel] = useState(false);
+  const [showModal, setShowModal] = useState(false);
+  const [editingVehicle, setEditingVehicle] = useState(null);
   const destinationRef = useRef(null);
   const debounceTimeout = useRef(null);
-
+  
   useEffect(() => {
     if (authToken) {
       verifyToken();
@@ -108,7 +115,7 @@ const App = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           text: trimmedQuery, 
-          limit: 6, 
+          limit: 10, // Get more results to filter
           lang: lang 
         })
       });
@@ -116,11 +123,55 @@ const App = () => {
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
   
       const data = await response.json();
-      const filteredSuggestions = data.features.map(item => ({
-        name: item.properties.formatted,
-        lat: item.geometry.coordinates[1],
-        lon: item.geometry.coordinates[0],
-      }));
+      
+      // Filter to only Tel Aviv results
+      const telAvivResults = data.features.filter(item => {
+        const props = item.properties;
+        const city = props.city || '';
+        const county = props.county || '';
+        const state = props.state || '';
+        const country = props.country || '';
+        
+        // Must be in Israel
+        if (country !== 'Israel' && country !== 'ישראל') return false;
+        
+        // Must be Tel Aviv or nearby
+        const isTelAviv = 
+          city.includes('Tel Aviv') || 
+          city.includes('תל אביב') ||
+          city.includes('תל־אביב') ||
+          county.includes('Tel Aviv') || 
+          county.includes('תל אביב') ||
+          state.includes('Tel Aviv') ||
+          state.includes('תל אביב');
+        
+        return isTelAviv;
+      });
+      
+      // Format suggestions to be cleaner
+      const filteredSuggestions = telAvivResults.slice(0, 6).map(item => {
+        const props = item.properties;
+        
+        // Build clean main name
+        let mainName = props.street || props.name || '';
+        if (props.housenumber) {
+          mainName = `${mainName} ${props.housenumber}`;
+        }
+        
+        // Build subtext (just city and country, no postal code)
+        let subtext = 'תל אביב, ישראל'; // Default
+        if (props.district || props.suburb) {
+          subtext = `${props.district || props.suburb}, תל אביב`;
+        }
+        
+        return {
+          name: mainName || props.formatted,
+          subtext: subtext,
+          lat: item.geometry.coordinates[1],
+          lon: item.geometry.coordinates[0],
+        };
+      });
+      
       setSuggestions(filteredSuggestions);
       setShowSuggestions(true);
     } catch (error) {
@@ -128,7 +179,7 @@ const App = () => {
       setSuggestions([]);
       setShowSuggestions(false);
     }
-  };  
+  };
 
   const geocodeDestination = async (address) => {
     try {
@@ -158,8 +209,7 @@ const App = () => {
       setError('Failed to geocode destination: ' + error.message);
       return null;
     }
-  };
-  
+  };  
 
     // Pricing strategy functions
   const pricingStrategies = {
@@ -235,39 +285,45 @@ const App = () => {
   };
 
   // Main calculate price function
-  function calculatePrice(lot, hours, minutes, vehicleType) {
-    const totalMinutes = Math.max(1, hours * 60 + minutes);
-    const strategy = lot.pricing_strategy || 'hourly_blocks';
-    
-    // Get base price from strategy
-    const pricingFunction = pricingStrategies[strategy] || pricingStrategies.hourly_blocks;
-    let price = pricingFunction(lot, totalMinutes, vehicleType);
-    
-    // Apply discounts (works for all strategies)
-    const rules = Array.isArray(lot.pricing_rules) ? lot.pricing_rules : [];
-    const specialRule = rules.find(r => r.type === 'special') || {};
-    
-    let discount = 0;
-    if (vehicleType === 'telAvivResident' && specialRule.resident_discount) {
-      discount = specialRule.resident_discount;
-    } else if (vehicleType === 'disabled' && specialRule.disabled_discount) {
-      discount = specialRule.disabled_discount;
-    }
-    
-    if (discount > 0) {
-      price *= (1 - discount);
-    }
-    
-    return {
-      dayPrice: Number(price.toFixed(2)),
-      nightPrice: Number(price.toFixed(2)),
-      singleEntrancePrice: null,
-      resetTime: null
-    };
+function calculatePrice(lot, hours, minutes, vehicleType) {
+  const totalMinutes = Math.max(1, hours * 60 + minutes);
+  const strategy = lot.pricing_strategy || 'hourly_blocks';
+
+  // Get base price from strategy
+  const pricingFunction = pricingStrategies[strategy] || pricingStrategies.hourly_blocks;
+  let price = pricingFunction(lot, totalMinutes, vehicleType);
+
+  // Apply discounts (works for all strategies)
+  const rules = Array.isArray(lot.pricing_rules) ? lot.pricing_rules : [];
+  const specialRule = rules.find(r => r.type === 'special') || {};
+
+  let discount = 0;
+  if (vehicleType === 'resident' && specialRule.resident_discount) {
+    discount = specialRule.resident_discount;
+  } else if (vehicleType === 'disabled' && specialRule.disabled_discount) {
+    discount = specialRule.disabled_discount;
   }
+
+  if (discount > 0) {
+    price *= (1 - discount);
+  }
+
+  return {
+    dayPrice: Number(price.toFixed(2)),
+    nightPrice: Number(price.toFixed(2)),
+    singleEntrancePrice: null,
+    resetTime: null
+  };
+}
 
 
   const searchParkingLots = async () => {
+    // Validate destination is entered
+    if (!destination || destination.trim().length === 0) {
+      setError('Please enter a destination first');
+      return;
+    } 
+
     setError('');
     setLoading(true);
     try {
@@ -307,7 +363,6 @@ const App = () => {
           walkingTime 
         };
       })
-      .filter(lot => ownershipFilter === 'All' || lot.ownership_type === ownershipFilter)
       .filter(lot => maxPriceFilter === 'Unlimited' || lot.prices.dayPrice <= parseFloat(maxPriceFilter))
       .sort((a, b) => a.distance - b.distance);
       
@@ -584,6 +639,99 @@ const App = () => {
 
   // ========== PART 2 STARTS HERE ==========
   return (
+    <>
+      {/* Hamburger Menu Button */}
+      <button
+        className="fixed top-5 left-5 z-40 shadow bg-white rounded-full p-3 hover:bg-primary-50"
+        onClick={() => setShowSidebar(true)}
+        aria-label="Open menu"
+        style={{ boxShadow: "0 2px 8px rgba(0,0,0,0.10)" }}
+      >
+        <svg width="28" height="28" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+          <line x1="4" y1="7" x2="24" y2="7" />
+          <line x1="4" y1="14" x2="24" y2="14" />
+          <line x1="4" y1="21" x2="24" y2="21" />
+        </svg>
+      </button>
+  
+      {/* Sidebar Drawer */}
+      {showSidebar && (
+        <div className="fixed inset-0 z-50 flex">
+          {/* Overlay */}
+          <div
+            className="fixed inset-0 bg-black bg-opacity-40"
+            onClick={() => setShowSidebar(false)}
+            tabIndex={-1}
+          />
+          {/* Drawer Content */}
+          <div className="relative bg-white w-80 max-w-full h-full shadow-2xl p-6 flex flex-col overflow-y-auto z-50 animate-slide-in-left">
+
+            {/* Close Button */}
+            <button
+              className="absolute top-4 right-4 text-gray-400 hover:text-primary-600"
+              onClick={() => setShowSidebar(false)}
+              aria-label="Close menu"
+            >
+              <svg className="h-7 w-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12"/>
+              </svg>
+            </button>
+
+            {/* Profile Info */}
+            <div className="mb-8 mt-10 flex items-center gap-3">
+              <div className="h-12 w-12 rounded-full bg-gray-200 flex items-center justify-center text-2xl">👤</div>
+              <div>
+                <div className="font-bold text-lg text-gray-800">Guest</div>
+                <div className="text-xs text-gray-500">Profile & Settings</div>
+              </div>
+            </div>
+
+            {/* Menu List */}
+            <div className="flex flex-col space-y-4">
+              <button
+                className="text-left w-full font-semibold text-primary-700 hover:bg-primary-50 px-3 py-2 rounded-lg flex items-center gap-2"
+                onClick={() => setShowVehiclesPanel(true)}
+              >
+                🚗 My Vehicles
+              </button>
+              <button
+                className="text-left w-full font-semibold text-primary-700 hover:bg-primary-50 px-3 py-2 rounded-lg flex items-center gap-2"
+                onClick={() => alert('Settings coming soon!')}
+              >
+                ⚙️ Settings
+              </button>
+              <button
+                className="text-left w-full font-semibold text-primary-700 hover:bg-primary-50 px-3 py-2 rounded-lg flex items-center gap-2"
+                onClick={() => alert('Accessibility coming soon!')}
+              >
+                ♿ Accessibility
+              </button>
+            </div>
+
+            {/* My Vehicles Panel */}
+            {showVehiclesPanel && (
+              <div className="mt-10">
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className="text-lg font-semibold text-gray-800">My Vehicles</h2>
+                  <button
+                    onClick={() => setShowVehiclesPanel(false)}
+                    className="text-gray-400 hover:text-primary-600"
+                  >
+                    <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+                <VehicleSelector
+                  selectedVehicleId={selectedVehicle?.id}
+                  onVehicleSelect={setSelectedVehicle}
+                  onOpenAuth={() => alert('Login/sign-up coming soon!')}
+                />
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     <div className="min-h-screen bg-gray-100 p-8">
       <style>{`
         body {
@@ -922,142 +1070,163 @@ const App = () => {
           </div>
         ) : (
           <>
-            {error && <p className="text-red-500 mb-4">{error}</p>}
+            {/* Error Message */}
+            {error && (
+              <div className="mb-6 p-4 bg-red-50 border-l-4 border-red-500 rounded-xl shadow-soft">
+                <p className="text-red-600 font-medium flex items-center gap-2">
+                  <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  {error}
+                </p>
+              </div>
+            )}
+        
+            {/* Simplified Search Form */}
             <div className="flex flex-col gap-6">
-              <div className="relative z-10 mb-8">
-                <label className="block mb-1 text-gray-700">{i18next.t('searchPlaceholder')}</label>
-                <input
-                  ref={destinationRef}
-                  type="text"
-                  value={destination}
-                  onChange={handleInputChange}
-                  onFocus={() => destination.length >= 3 && setShowSuggestions(true)}
-                  placeholder={i18next.t('searchPlaceholder')}
-                  className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
+              {/* Destination Search Input */}
+              <div className="relative z-10">
+                <label className="block mb-2 text-lg font-bold text-gray-800">
+                  📍 {i18next.t('searchPlaceholder')}
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                    <svg className="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                  </div>
+                  <input
+                    ref={destinationRef}
+                    type="text"
+                    value={destination}
+                    onChange={handleInputChange}
+                    onFocus={() => destination.length >= 3 && setShowSuggestions(true)}
+                    placeholder={i18next.t('searchPlaceholder')}
+                    className="w-full pl-11 pr-4 py-4 border-2 border-gray-200 rounded-xl focus:outline-none focus:border-primary-500 focus:ring-4 focus:ring-primary-100 shadow-soft hover:border-gray-300 text-gray-900 placeholder-gray-400 font-medium"
+                  />
+                </div>
                 {showSuggestions && suggestions.length > 0 && (
-                  <ul className="absolute z-20 w-full bg-white border-blue-200 rounded-lg mt-1 shadow-lg max-h-64 overflow-y-auto opacity-100 autocomplete-dropdown">
+                  <ul className="absolute z-20 w-full bg-white border-2 border-primary-100 rounded-xl mt-2 shadow-large max-h-64 overflow-y-auto">
                     {suggestions.map((suggestion, index) => (
                       <li
                         key={index}
                         onMouseDown={() => handleSuggestionClick(suggestion)}
-                        className={`p-3 text-sm text-gray-900 hover:bg-blue-100 hover:text-blue-600 cursor-pointer rounded-md transition-all duration-200 autocomplete-item ${index > 0 ? 'border-t border-gray-100' : ''}`}
+                        className={`p-4 hover:bg-primary-50 cursor-pointer transition-all duration-150 ${index === 0 ? 'rounded-t-xl' : ''} ${index === suggestions.length - 1 ? 'rounded-b-xl' : ''} ${index > 0 ? 'border-t border-gray-100' : ''}`}
                       >
-                        {suggestion.name}
+                        <div className="flex items-start gap-3">
+                          <svg className="h-4 w-4 text-primary-500 flex-shrink-0 mt-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                          </svg>
+                          <div className="flex-1">
+                            <div className="font-semibold text-gray-900">{suggestion.name}</div>
+                            <div className="text-xs text-gray-500 mt-0.5">{suggestion.subtext}</div>
+                          </div>
+                        </div>
                       </li>
                     ))}
                   </ul>
                 )}
               </div>
+
+              {/* iOS-Style Time Picker */}
               <div>
-                <label className="block mb-1 text-gray-700">{i18next.t('radiusLabel')}</label>
-                <select
-                  value={radius}
-                  onChange={(e) => setRadius(e.target.value)}
-                  className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="200">200m</option>
-                  <option value="500">500m</option>
-                  <option value="1000">1km</option>
-                  <option value="2000">2km</option>
-                </select>
+                <label className="block mb-3 text-lg font-bold text-gray-800">
+                  ⏱️ {i18next.t('durationLabel')}
+                </label>
+                <TimePicker 
+                  hours={hours} 
+                  minutes={minutes} 
+                  onTimeChange={(newHours, newMinutes) => {
+                    setHours(newHours);
+                    setMinutes(newMinutes);
+                  }}
+                />
               </div>
-              <div>
-                <label className="block mb-1 text-gray-700">{i18next.t('durationLabel')}</label>
-                <div className="flex items-center gap-4">
-                  <div>
-                    <input
-                      type="number"
-                      value={hours}
-                      onChange={(e) => setHours(Math.max(0, Number(e.target.value)))}
-                      placeholder={i18next.t('hours')}
-                      className="w-20 p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      min="0"
-                    />
-                    <span className="ml-2 text-gray-600">{i18next.t('hours')}</span>
-                  </div>
-                  <div>
-                    <input
-                      type="number"
-                      value={minutes}
-                      onChange={(e) => setMinutes(Math.max(0, Math.min(59, Number(e.target.value))))}
-                      placeholder={i18next.t('minutes')}
-                      className="w-20 p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      min="0"
-                      max="59"
-                    />
-                    <span className="ml-2 text-gray-600">{i18next.t('minutes')}</span>
-                  </div>
-                </div>
-              </div>
-              <div>
-                <label className="block mb-1 text-gray-700">{i18next.t('vehicleType')}</label>
-                <select
-                  value={vehicleType}
-                  onChange={(e) => setVehicleType(e.target.value)}
-                  className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="standard">{i18next.t('standard')}</option>
-                  <option value="telAvivResident">{i18next.t('telAvivResident')}</option>
-                  <option value="disabled">{i18next.t('disabled')}</option>
-                </select>
-              </div>
-              <div>
-                <label className="block mb-1 text-gray-700">{i18next.t('ownershipType')}</label>
-                <select
-                  value={ownershipFilter}
-                  onChange={(e) => setOwnershipFilter(e.target.value)}
-                  className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="All">{i18next.t('select')}</option>
-                  <option value="Public">{i18next.t('public')}</option>
-                  <option value="Private">{i18next.t('private')}</option>
-                </select>
-              </div>
-              <div>
-                <label className="block mb-1 text-gray-700">{i18next.t('maxDailyPrice')}</label>
-                <select
-                  value={maxPriceFilter}
-                  onChange={(e) => setMaxPriceFilter(e.target.value)}
-                  className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="Unlimited">{i18next.t('select')}</option>
-                  {Array.from({ length: 10 }, (_, i) => (i + 1) * 10).map(value => (
-                    <option key={value} value={value}>{value} ₪</option>
-                  ))}
-                </select>
-              </div>
+
+              {/* Search Button - Big & Bold */}
               <button
                 onClick={searchParkingLots}
                 disabled={loading}
-                className="px-6 py-2 bg-blue-500 text-white rounded-full hover:bg-blue-600 transform hover:scale-105 transition-all duration-200 disabled:opacity-50"
+                className="w-full py-5 px-6 gradient-primary text-white font-bold rounded-2xl shadow-large hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3 text-xl mt-4"
               >
-                {loading ? <span className="spinner"></span> : null}
-                {i18next.t('searchButton')}
+                {loading ? (
+                  <>
+                    <svg className="animate-spin h-6 w-6" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <span>מחפש...</span>
+                  </>
+                ) : (
+                  <>
+                    <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                    <span>{i18next.t('searchButton')}</span>
+                  </>
+                )}
               </button>
             </div>
-            <div className="mt-6">
+        
+            {/* Results Section */}
+            <div className="mt-8">
               {parkingLots.length === 0 ? (
-                <p className="text-gray-600">{i18next.t('noLotsFound')}</p>
+                <div className="text-center py-12">
+                  <svg className="mx-auto h-16 w-16 text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+                  </svg>
+                  <p className="text-gray-500 font-medium">{i18next.t('noLotsFound')}</p>
+                </div>
               ) : (
-                <div className="grid gap-4">
+                <div className="grid gap-5">
                   {parkingLots.map(lot => (
-                    <div key={lot._id || lot.id} className="p-6 bg-white rounded-xl shadow-md border border-gray-200 parking-card">
-                      <h3 className="text-lg font-semibold text-gray-900 mb-2">{lot.street_name}</h3>
-                      <p className="text-gray-700 text-sm mb-1"><span className="font-medium">{i18next.t('address')}:</span> {lot.address}</p>
-                      <p className="text-gray-700"><span className="font-medium">{i18next.t('dayPrice')}:</span> ₪{lot.prices.dayPrice}</p>
-                      <p className="text-gray-700"><span className="font-medium">{i18next.t('nightPrice')}:</span> ₪{lot.prices.nightPrice}</p>
+                    <div key={lot._id || lot.id} className="p-6 bg-white rounded-2xl shadow-medium border-2 border-gray-100 hover:shadow-large hover:border-primary-200 transition-all duration-300">
+                      <div className="flex justify-between items-start mb-4">
+                        <h3 className="text-xl font-bold text-gray-900">{lot.street_name}</h3>
+                        <span className="px-3 py-1 bg-secondary-100 text-secondary-700 rounded-full text-xs font-semibold">
+                          {lot.ownership_type}
+                        </span>
+                      </div>
+                      
+                      <p className="text-gray-600 text-sm mb-4 flex items-center gap-2">
+                        <svg className="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                        {lot.address}
+                      </p>
+        
+                      <div className="grid grid-cols-2 gap-4 mb-4">
+                        <div className="bg-primary-50 rounded-xl p-3">
+                          <p className="text-xs text-primary-600 font-semibold mb-1">{i18next.t('dayPrice')}</p>
+                          <p className="text-2xl font-bold text-primary-700">₪{lot.prices.dayPrice}</p>
+                        </div>
+                        <div className="bg-secondary-50 rounded-xl p-3">
+                          <p className="text-xs text-secondary-600 font-semibold mb-1">{i18next.t('walkingTime')}</p>
+                          <p className="text-2xl font-bold text-secondary-700">{lot.walkingTime}</p>
+                        </div>
+                      </div>
+        
                       {lot.prices.singleEntrancePrice != null && (
-                        <p className="text-gray-700"><span className="font-medium">{i18next.t('singleEntrancePrice')}:</span> ₪{lot.prices.singleEntrancePrice}</p>
+                        <p className="text-sm text-gray-600 mb-2">
+                          <span className="font-semibold">{i18next.t('singleEntrancePrice')}:</span> ₪{lot.prices.singleEntrancePrice}
+                        </p>
                       )}
-                      <p className="text-gray-700"><span className="font-medium">{i18next.t('walkingTime')}:</span> {lot.walkingTime}</p>
-                      <p className="text-gray-700 text-sm"><span className="font-medium">{i18next.t('totalCapacity')}:</span> {lot.total_spots} spots</p>
+        
+                      <p className="text-sm text-gray-600 mb-4">
+                        <span className="font-semibold">{i18next.t('totalCapacity')}:</span> {lot.total_spots} spots
+                      </p>
+        
                       <a
                         href={`https://waze.com/ul?ll=${lot.latitude}%2C${lot.longitude}&navigate=yes`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-block mt-2 text-blue-500 hover:text-blue-600 underline"
+                        className="inline-flex items-center gap-2 px-5 py-3 gradient-accent text-white font-bold rounded-xl shadow-soft hover:shadow-medium transition-all duration-200"
                       >
+                        <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+                        </svg>
                         {i18next.t('navigateWaze')}
                       </a>
                     </div>
@@ -1068,8 +1237,9 @@ const App = () => {
           </>
         )}
       </div>
-    </div>
-  );
+      </div>
+  </>
+);
 };
 
 export default App;
